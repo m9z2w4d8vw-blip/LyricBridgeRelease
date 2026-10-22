@@ -1,0 +1,11 @@
+Package: com.shalamand3r.lyricbridge
+Name: LyricBridge
+Version: 1.0
+Architecture: iphoneos-arm64
+Description: Native Apple Music lyrics for unsynced songs
+Depends: preferenceloader, com.shalamand3r.corelyrics (>= 1.0), ellekit, firmware (>= 16.2)
+Maintainer: shalamand3r
+Author: shalamand3r
+Section: Tweaks
+Icon: https://github.com/shalamand3r/shalamand3r.github.io/blob/main/icons/lyricbridge.png?raw=true
+SileoDepiction: https://raw.githubusercontent.com/shalamand3r/shalamand3r.github.io/refs/heads/main/depictions/lyricbridge.json

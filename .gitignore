@@ -1,0 +1,12 @@
+.theos/
+packages/
+archive/
+research/
+*.deb
+*.log
+*.ips
+*.dSYM/
+*.o
+.DS_Store
+__pycache__/
+.env

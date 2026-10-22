@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key>
+	<string>LyricBridge</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Configuration</string>
+			<key>footerText</key>
+			<string>External lyrics in Apple Music's native view. Apple's word-timed lyrics take priority.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>key</key>
+			<string>Enabled</string>
+			<key>label</key>
+			<string>Enabled</string>
+			<key>iconImageSystem</key>
+			<dict>
+				<key>name</key>
+				<string>power</string>
+			</dict>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.shalamand3r.lyricbridge</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Apple Music Sing</string>
+			<key>footerText</key>
+			<string>Enables Sing vocal control for more songs, including local files. Requires a device that supports Sing. Reopen Music after changing this option.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>key</key>
+			<string>EnableSing</string>
+			<key>label</key>
+			<string>Enable Sing</string>
+			<key>iconImageSystem</key>
+			<dict>
+				<key>name</key>
+				<string>mic.fill</string>
+			</dict>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.shalamand3r.lyricbridge</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Online Lyrics</string>
+			<key>footerText</key>
+			<string>Find missing lyrics, upgrade line-by-line lyrics to word-by-word timing, and support local files.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>key</key>
+			<string>MusixmatchEnabled</string>
+			<key>label</key>
+			<string>Online Lyrics</string>
+			<key>iconImageSystem</key>
+			<dict>
+				<key>name</key>
+				<string>globe</string>
+			</dict>
+			<key>default</key>
+			<true/>
+			<key>defaults</key>
+			<string>com.shalamand3r.datelyrics</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.datelyrics/ReloadPrefs</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>LyricBridgeProviderOrderController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>Lyric Services</string>
+			<key>iconImageSystem</key>
+			<dict>
+				<key>name</key>
+				<string>line.3.horizontal</string>
+			</dict>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Experimental</string>
+			<key>footerText</key>
+			<string>Cache management and reset options.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSLinkCell</string>
+			<key>detail</key>
+			<string>LyricBridgeExperimentalController</string>
+			<key>isController</key>
+			<true/>
+			<key>label</key>
+			<string>Experimental Options</string>
+			<key>iconImageSystem</key>
+			<dict>
+				<key>name</key>
+				<string>flask.fill</string>
+			</dict>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Source Code</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>id</key>
+			<string>GitHubCell</string>
+			<key>label</key>
+			<string>GitHub</string>
+			<key>action</key>
+			<string>openGithub</string>
+		</dict>
+	</array>
+</dict>
+</plist>

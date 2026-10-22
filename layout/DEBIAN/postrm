@@ -1,0 +1,15 @@
+#!/bin/sh
+case "$1" in
+    remove|purge)
+        for container in /var/mobile/Containers/Data/Application/*; do
+            for log in LyricBridge.log; do
+                target="$container/Library/Caches/$log"
+                if [ ! -L "$container" ] && [ ! -L "$container/Library" ] && \
+                   [ ! -L "$container/Library/Caches" ] && [ -f "$target" ] && [ ! -L "$target" ]; then
+                    rm -f "$target"
+                fi
+            done
+        done
+        ;;
+esac
+exit 0

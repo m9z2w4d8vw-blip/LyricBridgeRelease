@@ -1,0 +1,10 @@
+--- !tapi-tbd-v3
+archs: [ arm64, arm64e ]
+platform: ios
+install-name: '@rpath/libCoreLyrics.dylib'
+current-version: 1.0
+compatibility-version: 1.0
+exports:
+  - archs: [ arm64, arm64e ]
+    objc-classes: [ DLLyricsEngine, DLLyricsTrack, DLLyricsResult, DLLyricsSubscription ]
+...

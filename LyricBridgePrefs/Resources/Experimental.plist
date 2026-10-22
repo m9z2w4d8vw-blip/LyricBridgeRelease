@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>title</key>
+	<string>Experimental</string>
+	<key>items</key>
+	<array>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Storage &amp; Cache</string>
+			<key>footerText</key>
+			<string>Delete all locally saved lyrics to force fresh lookups on next playback.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>id</key>
+			<string>WipeSavedLyrics</string>
+			<key>label</key>
+			<string>Wipe Lyrics Cache</string>
+			<key>action</key>
+			<string>wipeSavedLyrics</string>
+			<key>isDestructive</key>
+			<true/>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Reset Settings</string>
+			<key>footerText</key>
+			<string>Reset LyricBridge preferences to default values.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Reset Settings</string>
+			<key>action</key>
+			<string>resetSettings</string>
+			<key>isDestructive</key>
+			<true/>
+			<key>confirmation</key>
+			<dict>
+				<key>title</key>
+				<string>Reset All</string>
+				<key>prompt</key>
+				<string>Reset all LyricBridge settings? Saved lyrics will be kept.</string>
+				<key>okTitle</key>
+				<string>Reset</string>
+				<key>cancelTitle</key>
+				<string>Cancel</string>
+			</dict>
+		</dict>
+	</array>
+</dict>
+</plist>
