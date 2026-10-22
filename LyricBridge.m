@@ -32,8 +32,56 @@ static atomic_bool keepOffline;
 static atomic_bool diagnostics;
 static NSMutableDictionary<NSValue *, id> *pending;
 static NSMutableDictionary<NSString *, NSDate *> *negativeResults;
-static MPMusicPlayerController *musicPlayer;
+typedef void (*NLGetPlaybackInfo)(dispatch_queue_t, void (^)(CFDictionaryRef));
+static NLGetPlaybackInfo getPlaybackInfo;
+static NSObject *playbackLock;
+static NSDictionary *playbackInfo;
+static NSUInteger playbackGeneration;
 static id songObserver;
+
+static NSDictionary *NLPlaybackSnapshot(void) {
+    @synchronized (playbackLock) { return playbackInfo; }
+}
+static BOOL NLPlaybackMatches(NSDictionary *info, NSString *title, NSString *artist) {
+    id playingTitle = info[@"kMRMediaRemoteNowPlayingInfoTitle"];
+    id playingArtist = info[@"kMRMediaRemoteNowPlayingInfoArtist"];
+    return [playingTitle isKindOfClass:NSString.class] && [playingArtist isKindOfClass:NSString.class] &&
+        [title isKindOfClass:NSString.class] && [artist isKindOfClass:NSString.class] && title.length && artist.length &&
+        [playingTitle caseInsensitiveCompare:title] == NSOrderedSame &&
+        [playingArtist caseInsensitiveCompare:artist] == NSOrderedSame;
+}
+static double NLPlaybackDuration(NSDictionary *info) {
+    id value = info[@"kMRMediaRemoteNowPlayingInfoDuration"];
+    double duration = [value isKindOfClass:NSNumber.class] ? [value doubleValue] : 0;
+    return isfinite(duration) && duration > 0 ? duration : 0;
+}
+static DLLyricsTrack *NLPlaybackTrack(NSDictionary *info) {
+    id title = info[@"kMRMediaRemoteNowPlayingInfoTitle"], artist = info[@"kMRMediaRemoteNowPlayingInfoArtist"];
+    if (!NLPlaybackMatches(info, title, artist)) return nil;
+    DLLyricsTrack *track = [DLLyricsTrack trackWithTitle:title artist:artist duration:NLPlaybackDuration(info)];
+    id album = info[@"kMRMediaRemoteNowPlayingInfoAlbum"];
+    if ([album isKindOfClass:NSString.class]) track.album = album;
+    return track;
+}
+static void NLReadPlaybackInfo(void (^completion)(NSDictionary *)) {
+    if (!getPlaybackInfo) { completion(nil); return; }
+    NSUInteger generation = playbackGeneration;
+    __block BOOL finished = NO;
+    void (^finish)(NSDictionary *) = ^(NSDictionary *info) {
+        if (finished) return;
+        finished = YES;
+        if (generation != playbackGeneration) { completion(nil); return; }
+        if (info) {
+            @synchronized (playbackLock) { playbackInfo = [info copy]; }
+        }
+        completion(info);
+    };
+    // metadata can arrive late; never hold apple's lyric loader indefinitely.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dispatch_get_main_queue(), ^{ finish(nil); });
+    getPlaybackInfo(dispatch_get_main_queue(), ^(CFDictionaryRef info) {
+        finish(info ? (__bridge NSDictionary *)info : nil);
+    });
+}
 
 static void NLLog(NSString *message) {
 #if DEBUG
@@ -78,14 +126,8 @@ static DLLyricsTrack *NLTrack(id song) {
     NSString *title = NLObject(song, @"title"), *artist = NLObject(NLObject(song, @"artist"), @"name");
     if (![title isKindOfClass:NSString.class] || ![artist isKindOfClass:NSString.class] || !title.length || !artist.length) return nil;
     double duration = NLDuration(song);
-    if (duration <= 0) {
-        MPMediaItem *playing = MPMusicPlayerController.systemMusicPlayer.nowPlayingItem;
-        if (playing.title.length && playing.artist.length &&
-            [playing.title caseInsensitiveCompare:title] == NSOrderedSame &&
-            [playing.artist caseInsensitiveCompare:artist] == NSOrderedSame &&
-            isfinite(playing.playbackDuration) && playing.playbackDuration > 0)
-            duration = playing.playbackDuration;
-    }
+    NSDictionary *info = NLPlaybackSnapshot();
+    if (duration <= 0 && NLPlaybackMatches(info, title, artist)) duration = NLPlaybackDuration(info);
     DLLyricsTrack *track = [DLLyricsTrack trackWithTitle:title artist:artist duration:duration];
     NSString *album = NLObject(NLObject(song, @"album"), @"title");
     if ([album isKindOfClass:NSString.class]) track.album = album;
@@ -187,7 +229,7 @@ static BOOL __attribute__((swiftcall)) NLSupports(void *song, void * __attribute
     }
     return YES;
 }
-static void NLFetchRequest(NLRequest *request, NSValue *key) {
+static void NLBeginFetch(NLRequest *request, NSValue *key) {
     NLLog([NSString stringWithFormat:@"Lookup: %@ / %@ duration=%.3f", request.track.title, request.track.artist, request.track.duration]);
     __weak NLRequest *weakRequest = request;
     request.subscription = [DLLyricsEngine.sharedEngine fetchTrack:request.track client:@"LyricBridge" update:^(DLLyricsResult *result, BOOL finished, NSError *error) {
@@ -221,6 +263,15 @@ static void NLFetchRequest(NLRequest *request, NSValue *key) {
         active.lookupFinished = YES;
         if (!active.pendingUpgrade) [pending removeObjectForKey:key];
     }];
+}
+static void NLFetchRequest(NLRequest *request, NSValue *key) {
+    if (request.track.duration > 0) { NLBeginFetch(request, key); return; }
+    NLReadPlaybackInfo(^(NSDictionary *info) {
+        if (![request isCurrent]) return;
+        if (NLPlaybackMatches(info, request.track.title, request.track.artist))
+            request.track.duration = NLPlaybackDuration(info);
+        NLBeginFetch(request, key);
+    });
 }
 static void __attribute__((swiftcall)) NLLoad(void *song, void *callback, void *context, void * __attribute__((swift_context)) loader) {
     // apple's loader inherits nsobject, first field is a dict not swift refcount
@@ -282,14 +333,14 @@ static void NLObserveAppleLyrics(UIViewController *viewer, id model) {
         }
     }
     DLLyricsTrack *track = NLTrack(song);
+    if (!track) track = NLPlaybackTrack(NLPlaybackSnapshot());
     if (!track) {
-        MPMediaItem *item = MPMusicPlayerController.systemMusicPlayer.nowPlayingItem;
-        if (item.title.length && item.artist.length) {
-            track = [DLLyricsTrack trackWithTitle:item.title artist:item.artist duration:item.playbackDuration];
-            if (item.albumTitle.length) track.album = item.albumTitle;
-        }
+        __weak UIViewController *waitingViewer = viewer;
+        NLReadPlaybackInfo(^(NSDictionary *info) {
+            if (NLPlaybackTrack(info)) NLObserveAppleLyrics(waitingViewer, model);
+        });
+        return;
     }
-    if (!track) { NLLog(@"Native lyrics viewer has no song owner yet"); return; }
     NSValue *key = [NSValue valueWithPointer:(__bridge void *)viewer];
     NLRequest *old = pending[key];
     if (old.displayedModel == model && [old.track.cacheKey isEqualToString:track.cacheKey]) return;
@@ -317,9 +368,9 @@ static BOOL NLPreference(NSString *key, BOOL fallback, NSDictionary *saved) {
     id value = DLLyricsPreferenceValue(@"com.shalamand3r.lyricbridge", key, saved);
     return [value isKindOfClass:NSNumber.class] ? [value boolValue] : fallback;
 }
-static void NLSongChanged(void) {
-    MPMediaItem *item = musicPlayer.nowPlayingItem;
-    NSString *title = item.title, *artist = item.artist;
+static void NLSongChanged(NSDictionary *info) {
+    NSString *title = info[@"kMRMediaRemoteNowPlayingInfoTitle"], *artist = info[@"kMRMediaRemoteNowPlayingInfoArtist"];
+    if (![title isKindOfClass:NSString.class] || ![artist isKindOfClass:NSString.class]) return;
     if (!title.length || !artist.length) return;
     for (NSValue *key in [pending.allKeys copy]) {
         NLRequest *request = pending[key];
@@ -362,6 +413,7 @@ static void *NLBranchDestination(void *symbol) {
 __attribute__((constructor)) static void NLStart(void) {
     @autoreleasepool {
         if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.apple.Music"]) return;
+        playbackLock = [NSObject new];
         negativeResults = [NSMutableDictionary dictionary];
         NSDictionary *saved = DLLyricsSavedPreferences(@"com.shalamand3r.lyricbridge");
         atomic_store(&diagnostics, NLPreference(@"DebugLogging", NO, saved));
@@ -401,9 +453,16 @@ __attribute__((constructor)) static void NLStart(void) {
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, NLClearCache, CFSTR("com.shalamand3r.corelyrics/ClearCaches"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, NLClearCache, CFSTR("com.shalamand3r.datelyrics/ClearCaches"), NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
         dispatch_async(dispatch_get_main_queue(), ^{
-            musicPlayer = MPMusicPlayerController.systemMusicPlayer;
-            songObserver = [NSNotificationCenter.defaultCenter addObserverForName:MPMusicPlayerControllerNowPlayingItemDidChangeNotification object:musicPlayer queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) { NLSongChanged(); }];
-            [musicPlayer beginGeneratingPlaybackNotifications];
+            void *mediaRemote = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW);
+            getPlaybackInfo = (NLGetPlaybackInfo)dlsym(mediaRemote ?: RTLD_DEFAULT, "MRMediaRemoteGetNowPlayingInfo");
+            void (*registerNotifications)(dispatch_queue_t) = dlsym(mediaRemote ?: RTLD_DEFAULT, "MRMediaRemoteRegisterForNowPlayingNotifications");
+            if (registerNotifications) registerNotifications(dispatch_get_main_queue());
+            songObserver = [NSNotificationCenter.defaultCenter addObserverForName:@"kMRMediaRemoteNowPlayingInfoDidChangeNotification" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
+                ++playbackGeneration;
+                @synchronized (playbackLock) { playbackInfo = nil; }
+                NLReadPlaybackInfo(^(NSDictionary *info) { NLSongChanged(info); });
+            }];
+            NLReadPlaybackInfo(^(NSDictionary *info) { NLSongChanged(info); });
         });
         NLLog(@"LyricBridge loaded; native Apple lyrics retained; automatic external fallback ready");
     }
