@@ -409,7 +409,7 @@ static void NLReload(CFNotificationCenterRef center, void *observer, CFStringRef
     atomic_store(&enabled, NLPreference(@"Enabled", YES, saved));
     atomic_store(&keepOffline, NLPreference(@"KeepOffline", NO, saved));
     atomic_store(&diagnostics, NLPreference(@"DebugLogging", NO, saved));
-    atomic_store(&performanceLogging, NLPreference(@"PerformanceLogging", NO, saved));
+    atomic_store(&performanceLogging, atomic_load(&diagnostics));
     NLSingSetLoggingEnabled(atomic_load(&diagnostics));
     NLSingSetEnabled(atomic_load(&enabled) && NLPreference(@"EnableSing", YES, saved));
     dispatch_async(dispatch_get_main_queue(), ^{

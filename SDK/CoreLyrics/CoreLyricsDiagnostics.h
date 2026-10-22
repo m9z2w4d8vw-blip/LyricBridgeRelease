@@ -5,7 +5,7 @@
 #import <unistd.h>
 
 static inline NSArray<NSString *> *CLDiagnosticFilenames(void) {
-    return @[@"CoreLyrics-debug.log", @"CoreLyrics-performance.log", @"LyricBridge-debug.log", @"LyricBridge-performance.log"];
+    return @[@"CoreLyrics-diagnostics.log", @"CoreLyrics-debug.log", @"CoreLyrics-performance.log", @"LyricBridge-debug.log", @"LyricBridge-performance.log"];
 }
 static inline int CLDiagnosticLock(NSString *root) {
     if (![NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil]) return -1;
@@ -16,8 +16,8 @@ static inline int CLDiagnosticLock(NSString *root) {
 static inline void CLDiagnosticUnlock(int descriptor) { if (descriptor >= 0) { flock(descriptor, LOCK_UN); close(descriptor); } }
 static inline void CLDiagnosticAppend(NSString *root, NSString *component, BOOL performance, NSString *message) {
     NSTimeInterval timestamp = NSDate.date.timeIntervalSince1970;
-    NSString *filename = [NSString stringWithFormat:@"%@-%@.log", component, performance ? @"performance" : @"debug"];
-    if (![CLDiagnosticFilenames() containsObject:filename]) return;
+    if (![@[@"CoreLyrics", @"LyricBridge"] containsObject:component]) return;
+    NSString *filename = @"CoreLyrics-diagnostics.log";
     static dispatch_queue_t queue;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ queue = dispatch_queue_create("com.shalamand3r.lyrics.diagnostics", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0)); });
@@ -27,7 +27,7 @@ static inline void CLDiagnosticAppend(NSString *root, NSString *component, BOOL 
             NSString *marker = [root stringByAppendingPathComponent:@".diagnostics-cleared"];
             double cleared = [[NSString stringWithContentsOfFile:marker encoding:NSUTF8StringEncoding error:nil] doubleValue];
             if (timestamp >= cleared) {
-                NSString *line = [NSString stringWithFormat:@"[%@] %.3f pid=%d %@\n", component, timestamp, getpid(), message];
+                NSString *line = [NSString stringWithFormat:@"[%@] %.3f pid=%d %@ %@\n", component, timestamp, getpid(), performance ? @"performance" : @"debug", message];
                 NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
                 int file = open([root stringByAppendingPathComponent:filename].fileSystemRepresentation, O_CREAT | O_WRONLY | O_APPEND | O_NOFOLLOW, 0600);
                 if (file >= 0) {

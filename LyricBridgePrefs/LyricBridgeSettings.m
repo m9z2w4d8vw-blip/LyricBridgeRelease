@@ -7,7 +7,6 @@
 #import <Preferences/PSControlTableCell.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "LyricBridgeDiagnostics.h"
 
 #define PREFS_SUITE @"com.shalamand3r.lyricbridge"
@@ -469,7 +468,7 @@ static void LyricBridgeWipeLyricsCaches(void) {
 
 // mark: - experimental options controller
 
-@interface LyricBridgeExperimentalController : PSListController <UIDocumentPickerDelegate>
+@interface LyricBridgeExperimentalController : PSListController
 @property (nonatomic) BOOL diagnosticsVisible;
 @property (nonatomic) BOOL resetInProgress;
 @property (nonatomic) NSUInteger cacheSizeRequest;
@@ -502,7 +501,7 @@ static void LyricBridgeWipeLyricsCaches(void) {
     title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; title.textColor = UIColor.labelColor;
     title.userInteractionEnabled = YES; [title sizeToFit];
     UILongPressGestureRecognizer *gesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(toggleDiagnostics:)];
-    gesture.minimumPressDuration = 2; [title addGestureRecognizer:gesture]; self.navigationItem.titleView = title;
+    gesture.minimumPressDuration = 1; [title addGestureRecognizer:gesture]; self.navigationItem.titleView = title;
     UIColor *tintColor = PINK_COLOR;
     [UISwitch appearanceWhenContainedInInstancesOfClasses:@[[self class]]].onTintColor = tintColor;
     self.view.tintColor = tintColor;
@@ -532,17 +531,21 @@ static void LyricBridgeWipeLyricsCaches(void) {
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
 }
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
+    if ([[specifier propertyForKey:@"key"] isEqualToString:@"DebugLogging"])
+        [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     [super setPreferenceValue:value specifier:specifier];
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.shalamand3r.corelyrics/ReloadPrefs"), NULL, NULL, YES);
 }
-- (void)showDebugLog { [self showDiagnosticLog:NO]; }
-- (void)showPerformanceLog { [self showDiagnosticLog:YES]; }
-- (void)showDiagnosticLog:(BOOL)performance {
-    LyricBridgeLogController *controller = [LyricBridgeLogController new]; controller.performance = performance;
-    [self.navigationController pushViewController:controller animated:YES];
+- (void)showDebugLog {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    [self.navigationController pushViewController:[LyricBridgeLogController new] animated:YES];
 }
-- (void)exportLogs { LyricBridgeExportDiagnosticLogs(self); }
+- (void)exportLogs {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    LyricBridgeExportDiagnosticLogs(self);
+}
 - (void)clearLogs {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
     __weak typeof(self) weakSelf = self;
     dispatch_async(LyricBridgeCacheMaintenanceQueue(), ^{
         LyricBridgeClearDiagnosticLogs();
@@ -554,34 +557,6 @@ static void LyricBridgeWipeLyricsCaches(void) {
         });
     });
 }
-- (void)importLog {
-    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeText, UTTypeData] asCopy:YES];
-    picker.delegate = self; picker.allowsMultipleSelection = NO;
-    [self presentViewController:picker animated:YES completion:nil];
-}
-- (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
-    NSURL *url = urls.firstObject; if (!url) return;
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(LyricBridgeCacheMaintenanceQueue(), ^{
-        BOOL scoped = [url startAccessingSecurityScopedResource];
-        NSURL *destination = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"LyricBridge-import-%@.log", NSUUID.UUID.UUIDString]]];
-        BOOL copied = [NSFileManager.defaultManager copyItemAtURL:url toURL:destination error:nil];
-        if (scoped) [url stopAccessingSecurityScopedResource];
-        dispatch_async(dispatch_get_main_queue(), ^{
-            typeof(self) controller = weakSelf;
-            if (!controller) { [NSFileManager.defaultManager removeItemAtURL:destination error:nil]; return; }
-            if (copied) {
-                LyricBridgeLogController *viewer = [LyricBridgeLogController new]; viewer.importedURL = destination;
-                [controller.navigationController pushViewController:viewer animated:YES];
-            } else {
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Couldn’t Import Log" message:@"Choose a text or log file from Files." preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-                [controller presentViewController:alert animated:YES completion:nil];
-            }
-        });
-    });
-}
-
 - (void)updateWipeCacheSpecifier {
     NSUInteger request = ++self.cacheSizeRequest;
     __weak typeof(self) weakSelf = self;

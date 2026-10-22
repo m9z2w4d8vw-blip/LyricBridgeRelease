@@ -9,11 +9,19 @@
 static atomic_bool singEnabled;
 static atomic_bool singLogging;
 static atomic_bool singHooksReady;
+static atomic_int singControlState = -1;
+static atomic_int singSupportState = -1;
+static void singControlLog(int state, NSString *event) {
+    if (atomic_load(&singLogging) && atomic_exchange(&singControlState, state) != state)
+        CLDiagnosticAppend([NSHomeDirectory() stringByAppendingPathComponent:@"Library/CoreLyrics"], @"LyricBridge", NO, event);
+}
 static void singLog(NSString *event) {
     if (atomic_load(&singLogging)) CLDiagnosticAppend([NSHomeDirectory() stringByAppendingPathComponent:@"Library/CoreLyrics"], @"LyricBridge", NO, event);
 }
 void NLSingSetLoggingEnabled(BOOL enabled) {
     atomic_store(&singLogging, enabled);
+    atomic_store(&singControlState, -1);
+    atomic_store(&singSupportState, -1);
     singLog(atomic_load(&singHooksReady) ? @"Sing hooks ready" : @"Sing hooks unavailable");
 }
 static atomic_bool hasControl;
@@ -41,13 +49,19 @@ static id objectProperty(id value, NSString *name) {
     return ((id (*)(id, SEL))objc_msgSend)(value, selector);
 }
 static BOOL supportsVocals(id item, SEL selector) {
-    return originalSupport(item, selector) || atomic_load(&singEnabled);
+    BOOL native = originalSupport(item, selector);
+    BOOL forced = atomic_load(&singEnabled);
+    int state = (native ? 1 : 0) | (forced ? 2 : 0);
+    if (atomic_load(&singLogging) && atomic_exchange(&singSupportState, state) != state)
+        singLog([NSString stringWithFormat:@"Sing capability native=%d override=%d", native, forced]);
+    return native || forced;
 }
 static id vocalsControl(id list, SEL selector) {
     id native = originalControl(list, selector);
-    if (!atomic_load(&singEnabled)) return native;
+    if (!atomic_load(&singEnabled)) { singControlLog(0, @"Sing using original control; override disabled"); return native; }
     id song = objectProperty(objectProperty(objectProperty(list, @"playingItem"), @"metadataObject"), @"song");
     if (native || !song) {
+        singControlLog(native ? 1 : 2, native ? @"Sing native control available" : @"Sing waiting for song metadata");
         atomic_store(&hasControl, native != nil);
         @synchronized (commandLock) { cachedCommand = nil; cachedList = nil; }
         return native;
@@ -66,7 +80,9 @@ static id vocalsControl(id list, SEL selector) {
                 [command setLevel:1];
                 [command setContinuous:YES];
                 cachedCommand = command;
-                singLog(@"Sing fallback command created");
+                singControlLog(cachedCommand ? 3 : 4, cachedCommand ? @"Sing fallback command created" : @"Sing fallback command initialization failed");
+            } else {
+                singControlLog(response ? 5 : 6, response ? @"Sing fallback command class unavailable" : @"Sing waiting for player response");
             }
         }
         atomic_store(&hasControl, cachedCommand != nil);

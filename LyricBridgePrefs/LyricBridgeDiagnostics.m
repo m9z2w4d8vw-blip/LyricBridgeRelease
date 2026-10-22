@@ -1,6 +1,5 @@
 #import "LyricBridgeDiagnostics.h"
 #import "CoreLyrics/CoreLyricsDiagnostics.h"
-#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 NSArray<NSString *> *LyricBridgeDiagnosticRoots(void) {
     NSMutableArray *roots = [NSMutableArray arrayWithArray:@[@"/var/mobile/Library/CoreLyrics", @"/var/jb/var/mobile/Library/CoreLyrics"]];
@@ -14,11 +13,11 @@ NSArray<NSString *> *LyricBridgeDiagnosticRoots(void) {
     for (NSString *root in roots) [resolved addObject:root.stringByResolvingSymlinksInPath];
     return resolved.array;
 }
-NSArray<NSURL *> *LyricBridgeDiagnosticFiles(BOOL performance) {
+NSArray<NSURL *> *LyricBridgeDiagnosticFiles(void) {
     NSMutableArray *files = [NSMutableArray new];
     for (NSString *root in LyricBridgeDiagnosticRoots()) {
-        for (NSString *component in @[@"CoreLyrics", @"LyricBridge"]) {
-            NSString *path = [root stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@.log", component, performance ? @"performance" : @"debug"]];
+        for (NSString *filename in CLDiagnosticFilenames()) {
+            NSString *path = [root stringByAppendingPathComponent:filename];
             NSDictionary *attrs = [NSFileManager.defaultManager attributesOfItemAtPath:path error:nil];
             if ([attrs.fileType isEqual:NSFileTypeRegular]) [files addObject:[NSURL fileURLWithPath:path]];
         }
@@ -44,16 +43,31 @@ static void LyricBridgeShareURLs(UIViewController *presenter, NSArray<NSURL *> *
 void LyricBridgeExportDiagnosticLogs(UIViewController *presenter) {
     __weak UIViewController *weakPresenter = presenter;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        NSArray *files = [LyricBridgeDiagnosticFiles(NO) arrayByAddingObjectsFromArray:LyricBridgeDiagnosticFiles(YES)];
+        NSArray *files = LyricBridgeDiagnosticFiles();
         NSURL *folder = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[@"LyricBridge-export-" stringByAppendingString:NSUUID.UUID.UUIDString]] isDirectory:YES];
         [NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:nil];
-        NSMutableArray *copies = [NSMutableArray new]; NSUInteger index = 0;
-        for (NSURL *url in files) {
-            NSURL *destination = [folder URLByAppendingPathComponent:[NSString stringWithFormat:@"%lu-%@", (unsigned long)++index, url.lastPathComponent]];
-            int lock = CLDiagnosticLock(url.path.stringByDeletingLastPathComponent);
-            if (lock >= 0 && [NSFileManager.defaultManager copyItemAtURL:url toURL:destination error:nil]) [copies addObject:destination];
-            CLDiagnosticUnlock(lock);
-        }
+        NSURL *destination = [folder URLByAppendingPathComponent:@"LyricBridge-diagnostics.log"];
+        [NSFileManager.defaultManager createFileAtPath:destination.path contents:nil attributes:@{NSFilePosixPermissions:@0600}];
+        NSFileHandle *output = [NSFileHandle fileHandleForWritingToURL:destination error:nil];
+        BOOL wrote = NO;
+        @try {
+            for (NSURL *url in files) {
+                int lock = CLDiagnosticLock(url.path.stringByDeletingLastPathComponent);
+                if (lock < 0) continue;
+                NSFileHandle *input = [NSFileHandle fileHandleForReadingFromURL:url error:nil];
+                @try {
+                    if (input && output) {
+                        [output writeData:[[NSString stringWithFormat:@"--- %@ ---\n", url.lastPathComponent] dataUsingEncoding:NSUTF8StringEncoding]];
+                        NSData *chunk;
+                        while ((chunk = [input readDataOfLength:64*1024]).length) [output writeData:chunk];
+                        [output writeData:[@"\n" dataUsingEncoding:NSUTF8StringEncoding]];
+                        wrote = YES;
+                    }
+                } @finally { [input closeFile]; CLDiagnosticUnlock(lock); }
+            }
+        } @catch (__unused NSException *exception) { wrote = NO; }
+        @finally { [output closeFile]; }
+        NSArray *copies = wrote ? @[destination] : @[];
         dispatch_async(dispatch_get_main_queue(), ^{
             if (weakPresenter) LyricBridgeShareURLs(weakPresenter, copies, folder);
             else [NSFileManager.defaultManager removeItemAtURL:folder error:nil];
@@ -89,16 +103,20 @@ static NSString *LyricBridgeLogTail(NSURL *url) {
     self.view = self.textView;
 }
 - (void)viewDidLoad {
-    [super viewDidLoad]; self.title = self.importedURL ? @"Imported Log" : self.performance ? @"Performance Log" : @"Debug Log";
+    [super viewDidLoad]; self.title = @"Diagnostics";
     self.navigationItem.rightBarButtonItems = @[
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refreshLog)],
         [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAction target:self action:@selector(exportLog)],
         [[UIBarButtonItem alloc] initWithTitle:@"Copy" style:UIBarButtonItemStylePlain target:self action:@selector(copyLog)]];
-    [self refreshLog];
+    [self loadLog];
 }
 - (void)refreshLog {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    [self loadLog];
+}
+- (void)loadLog {
     NSUInteger generation = ++self.refreshGeneration;
-    NSArray *files = self.importedURL ? @[self.importedURL] : LyricBridgeDiagnosticFiles(self.performance);
+    NSArray *files = LyricBridgeDiagnosticFiles();
     __weak typeof(self) weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         NSMutableArray *sections = [NSMutableArray new];
@@ -111,10 +129,12 @@ static NSString *LyricBridgeLogTail(NSURL *url) {
         });
     });
 }
-- (void)copyLog { UIPasteboard.generalPasteboard.string = self.textView.text; }
-- (void)exportLog {
-    if (self.importedURL) LyricBridgeShareURLs(self, @[self.importedURL], nil);
-    else LyricBridgeExportDiagnosticLogs(self);
+- (void)copyLog {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    UIPasteboard.generalPasteboard.string = self.textView.text;
 }
-- (void)dealloc { if (_importedURL) [NSFileManager.defaultManager removeItemAtURL:_importedURL error:nil]; }
+- (void)exportLog {
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+    LyricBridgeExportDiagnosticLogs(self);
+}
 @end

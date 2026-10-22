@@ -59,9 +59,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
-			<string>Diagnostics</string>
+			<string>Diagnostics (m9z2w4d8vw-blip)</string>
 			<key>footerText</key>
-			<string>Local logs omit song titles, artists, lyric text and tokens. Logging stays off until enabled. No automatic size limit; clear logs after testing.</string>
+			<string>Debug, performance and Sing events share one log. Logs omit song titles, artists, lyric text and tokens. Logging is off by default. No automatic size limit; clear logs after testing.</string>
 			<key>InternalDiagnostics</key>
 			<true/>
 		</dict>
@@ -71,23 +71,7 @@
 			<key>key</key>
 			<string>DebugLogging</string>
 			<key>label</key>
-			<string>Debug Logging</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.shalamand3r.lyricbridge</string>
-			<key>PostNotification</key>
-			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
-			<key>InternalDiagnostics</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>key</key>
-			<string>PerformanceLogging</string>
-			<key>label</key>
-			<string>Performance Logging</string>
+			<string>Logging</string>
 			<key>default</key>
 			<false/>
 			<key>defaults</key>
@@ -101,7 +85,7 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>View Debug Log</string>
+			<string>View Log</string>
 			<key>action</key>
 			<string>showDebugLog</string>
 			<key>InternalDiagnostics</key>
@@ -111,27 +95,7 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>View Performance Log</string>
-			<key>action</key>
-			<string>showPerformanceLog</string>
-			<key>InternalDiagnostics</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>Import Log</string>
-			<key>action</key>
-			<string>importLog</string>
-			<key>InternalDiagnostics</key>
-			<true/>
-		</dict>
-		<dict>
-			<key>cell</key>
-			<string>PSButtonCell</string>
-			<key>label</key>
-			<string>Export Logs</string>
+			<string>Export Log</string>
 			<key>action</key>
 			<string>exportLogs</string>
 			<key>InternalDiagnostics</key>
@@ -141,7 +105,7 @@
 			<key>cell</key>
 			<string>PSButtonCell</string>
 			<key>label</key>
-			<string>Clear Logs</string>
+			<string>Clear Log</string>
 			<key>action</key>
 			<string>clearLogs</string>
 			<key>InternalDiagnostics</key>
