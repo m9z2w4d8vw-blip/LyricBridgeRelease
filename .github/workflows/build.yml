@@ -1,0 +1,239 @@
+# Builds the rootless LyricBridge .deb on every push and publishes it as a
+# GitHub Release. Pushes to the default branch become the "Latest" release;
+# pushes to any other branch are published as pre-releases.
+#
+# Runs on macOS on purpose. LyricBridge loads into Music, an arm64e process,
+# so the arm64e slice is the one that actually runs. That slice is built with
+# -fno-ptrauth-objc-class-ro so Objective-C class_ro pointers stay unsigned:
+# signed ones make libobjc kill the app in readClass() the moment the tweak
+# loads on iOS 17.0. Apple's clang has that flag; the Theos Linux toolchain
+# doesn't, so it can't build a safe arm64e slice.
+#
+# Upstream's Makefiles are untouched. The extras go on the make command line,
+# which also carries them into the LyricBridgePrefs and install-helper
+# subprojects:
+#   -fno-ptrauth-objc-class-ro      the fix above
+#   -Wno-error                      Theos makes warnings fatal; a warning that
+#                                   only a newer Xcode emits shouldn't block a
+#                                   release. Warnings still show in the log.
+#   THEOS_PACKAGE_SCHEME=rootless   same value the Makefile sets, passed
+#                                   explicitly so no subproject can fall back
+#                                   to rootful paths
+
+name: Build and release
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Pushes to the same branch build one after another, so the newest commit
+# always ends up as the newest release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CLASS_RO_FLAG: '-fno-ptrauth-objc-class-ro'
+
+jobs:
+  build:
+    name: Build rootless deb
+    # Pinned rather than macos-latest so the Xcode major only changes when
+    # this line does.
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+
+      - name: Install Theos
+        run: |
+          brew install ldid xz
+          git clone --quiet --depth=1 --recurse-submodules \
+            https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+
+      # The SDK version is the third field of TARGET in the Makefile
+      # (iphone:clang:16.5:16.2). theos/sdks has the patched copy with the
+      # private frameworks the prefs bundle links against (Preferences).
+      - name: Install the iOS SDK
+        run: |
+          target=$(awk '/^[ \t]*(export[ \t]+)?TARGET[ \t]*[:?]?=/ {
+            sub(/^[^=]*=[ \t]*/, ""); sub(/[ \t\r]+$/, ""); print; exit }' Makefile)
+          version=$(echo "$target" | cut -d: -f3)
+          case "$version" in [0-9]*) ;; *) version=16.5 ;; esac
+          sdk="iPhoneOS$version.sdk"
+
+          git clone --quiet --depth=1 --filter=blob:none --sparse \
+            https://github.com/theos/sdks.git "$RUNNER_TEMP/sdks"
+          git -C "$RUNNER_TEMP/sdks" sparse-checkout set "$sdk"
+          if [ ! -d "$RUNNER_TEMP/sdks/$sdk" ]; then
+            echo "::error::theos/sdks has no $sdk (Makefile TARGET is '$target')."
+            exit 1
+          fi
+          mkdir -p "$THEOS/sdks"
+          mv "$RUNNER_TEMP/sdks/$sdk" "$THEOS/sdks/"
+          echo "Installed $sdk"
+
+      # messages=yes prints every compiler command, which the next step reads
+      # to confirm the class_ro flag was on each arm64e compile.
+      #
+      # If this fails with "unknown argument: '-fno-ptrauth-objc-class-ro'",
+      # the runner's Xcode doesn't know the flag. Point runs-on at a newer
+      # macOS image.
+      - name: Build
+        run: |
+          xcodebuild -version
+          xcrun clang --version
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless messages=yes \
+            ADDITIONAL_CFLAGS="$CLASS_RO_FLAG -Wno-error" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      # Refuses to publish anything that would crash Music, never load into
+      # it, or install to the wrong place on a rootless jailbreak.
+      - name: Check the package
+        run: |
+          stage=.theos/_
+
+          # 1. The class_ro flag was on every arm64e compile. Backslash-
+          #    continued commands are joined first so each is one line.
+          awk '{ if (sub(/\\$/, "")) { buf = buf $0; next } print buf $0; buf = "" }' \
+            "$RUNNER_TEMP/build.log" > "$RUNNER_TEMP/commands.log"
+          if ! grep -q -e "$CLASS_RO_FLAG" "$RUNNER_TEMP/commands.log"; then
+            echo "::error::$CLASS_RO_FLAG never reached the compiler, so the arm64e slice could crash Music at launch. Not publishing."
+            exit 1
+          fi
+          compiles=$(grep -e ' -c ' "$RUNNER_TEMP/commands.log" | grep -e 'arm64e' || true)
+          if [ -z "$compiles" ]; then
+            echo "::warning::Couldn't pick out the arm64e compile commands to check one by one. The flag did reach the compiler."
+          else
+            total=$(printf '%s\n' "$compiles" | wc -l | tr -d ' ')
+            missing=$(printf '%s\n' "$compiles" | grep -v -c -e "$CLASS_RO_FLAG" || true)
+            if [ "$missing" != 0 ]; then
+              echo "::error::$missing of $total arm64e compiles ran without $CLASS_RO_FLAG. Not publishing."
+              exit 1
+            fi
+            echo "class_ro signing is off in all $total arm64e compiles."
+          fi
+
+          # 2. Every staged binary's slices. The tweak dylib needs arm64e,
+          #    because Music is arm64e and won't load anything else.
+          if [ ! -d "$stage" ]; then
+            echo "::error::Theos staging directory $stage is missing."
+            exit 1
+          fi
+          echo
+          echo "Package contents:"
+          tweaks=0
+          while IFS= read -r f; do
+            path=${f#"$stage"}
+            if archs=$(lipo -archs "$f" 2>/dev/null); then
+              echo "  $path  [$archs]"
+              case "$path" in
+                */DynamicLibraries/*.dylib)
+                  tweaks=$((tweaks + 1))
+                  case " $archs " in
+                    *" arm64e "*) echo "SLICES=$archs" >> "$GITHUB_ENV" ;;
+                    *) echo "::error::$path has no arm64e slice, so Music won't load it."
+                       exit 1 ;;
+                  esac ;;
+              esac
+            else
+              echo "  $path"
+            fi
+          done < <(find "$stage" ! -type d | sort)
+          if [ "$tweaks" -eq 0 ]; then
+            echo "::error::No tweak dylib was staged under DynamicLibraries."
+            exit 1
+          fi
+
+          # 3. Rootless layout: nothing outside /var/jb except DEBIAN.
+          stray=$(cd "$stage" && find . ! -type d ! -path './DEBIAN/*' ! -path './var/jb/*')
+          if [ -n "$stray" ]; then
+            echo "::error::These are staged outside /var/jb, where a rootless package can't install:"
+            printf '%s\n' "$stray"
+            exit 1
+          fi
+
+          # 4. Exactly one deb came out.
+          if [ ! -d packages ]; then
+            echo "::error::Theos produced no packages/ directory."
+            exit 1
+          fi
+          count=$(find packages -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected one .deb in packages/, found $count."
+            exit 1
+          fi
+          deb=$(find packages -maxdepth 1 -name '*.deb')
+          echo
+          ls -l "$deb"
+          if [ -f "$stage/DEBIAN/control" ]; then cat "$stage/DEBIAN/control"; fi
+          echo "DEB=$deb" >> "$GITHUB_ENV"
+
+      # A second copy on the run page, in case the release step fails.
+      - name: Upload the deb to the run
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ github.event.repository.name }}-deb
+          path: packages/*.deb
+          if-no-files-found: error
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          field() {
+            awk -v k="$1" 'index($0, k ":") == 1 {
+              sub(/^[^:]*:[ \t]*/, ""); sub(/\r$/, ""); print; exit }' control
+          }
+          file=$(basename "$DEB")
+          # Debian filenames are package_version_arch.deb.
+          version=$(echo "${file%.deb}" | cut -d_ -f2)
+          arch=$(echo "${file%.deb}" | cut -d_ -f3)
+          name=$(field Name)
+          depends=$(field Depends)
+          [ -n "$name" ] || name=$(echo "$file" | cut -d_ -f1)
+
+          tag="v${version//[^A-Za-z0-9._+-]/-}-build.$GITHUB_RUN_NUMBER"
+          title="$name $version (build $GITHUB_RUN_NUMBER)"
+          sha=$(shasum -a 256 "$DEB" | cut -d' ' -f1)
+          subject=$(git log -1 --format=%s)
+
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "Built from \`${GITHUB_SHA:0:7}\` on \`$GITHUB_REF_NAME\`: $subject"
+            echo
+            echo "Download \`$file\` on the device and open it in Sileo or Filza."
+            echo
+            echo "Package: \`$arch\` (rootless). Tweak slices: $SLICES."
+            if [ -n "$depends" ]; then echo "Depends: $depends"; fi
+            echo "SHA-256: \`$sha\`"
+          } > "$notes"
+
+          if gh release view "$tag" > /dev/null 2>&1; then
+            # A re-run of the same build: replace the asset in place.
+            gh release upload "$tag" "$DEB" --clobber
+          else
+            if [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
+              channel=--latest
+            else
+              channel=--prerelease
+            fi
+            gh release create "$tag" "$DEB" --target "$GITHUB_SHA" \
+              --title "$title" --notes-file "$notes" "$channel"
+          fi
+
+          url=$(gh release view "$tag" --json url --jq .url)
+          echo "Published $url"
+          echo "### [$title]($url)" >> "$GITHUB_STEP_SUMMARY"
