@@ -84,7 +84,6 @@ static void NLReadPlaybackInfo(void (^completion)(NSDictionary *)) {
 }
 
 static void NLLog(NSString *message) {
-#if DEBUG
     if (!atomic_load(&diagnostics)) return;
     NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/LyricBridge.log"];
     @synchronized (negativeResults) {
@@ -97,9 +96,6 @@ static void NLLog(NSString *message) {
         @catch (__unused NSException *exception) {}
         @finally { [file closeFile]; }
     }
-#else
-    (void)message;
-#endif
 }
 static id NLObject(id object, NSString *property) {
     Method method = class_getInstanceMethod([object class], NSSelectorFromString(property));
@@ -157,6 +153,7 @@ static id NLModel(DLLyricsResult *result) {
 @property (nonatomic, readonly) void *loader;
 @property (nonatomic) BOOL completed;
 @property (nonatomic) BOOL lookupFinished;
+@property (nonatomic) NSUInteger lookupGeneration;
 @property (nonatomic, strong) id pendingUpgrade;
 @property (nonatomic) BOOL preservingAppleLyrics;
 @property (nonatomic, weak) UIViewController *viewer;
@@ -231,10 +228,11 @@ static BOOL __attribute__((swiftcall)) NLSupports(void *song, void * __attribute
 }
 static void NLBeginFetch(NLRequest *request, NSValue *key) {
     NLLog([NSString stringWithFormat:@"Lookup: %@ / %@ duration=%.3f", request.track.title, request.track.artist, request.track.duration]);
+    NSUInteger generation = request.lookupGeneration;
     __weak NLRequest *weakRequest = request;
     request.subscription = [DLLyricsEngine.sharedEngine fetchTrack:request.track client:@"LyricBridge" update:^(DLLyricsResult *result, BOOL finished, NSError *error) {
         NLRequest *active = weakRequest;
-        if (!active || ![active isCurrent]) return;
+        if (!active || ![active isCurrent] || active.lookupGeneration != generation) return;
         NLLog([NSString stringWithFormat:@"Result: provider=%@ lines=%lu words=%d finished=%d error=%@", result.provider, (unsigned long)result.lines.count, result.hasWordTiming, finished, error]);
         BOOL usable = result && (!active.preservingAppleLyrics || result.hasWordTiming);
         id model = usable && result != active.displayedResult ? NLModel(result) : nil;
@@ -261,13 +259,18 @@ static void NLBeginFetch(NLRequest *request, NSValue *key) {
             [active forwardOriginal];
         }
         active.lookupFinished = YES;
-        if (!active.pendingUpgrade) [pending removeObjectForKey:key];
+        // retain an on-screen line result until late duration metadata can upgrade it.
+        if (!active.pendingUpgrade && (active.track.duration > 0 || !active.displayedModel || active.displayedResult.hasWordTiming))
+            [pending removeObjectForKey:key];
     }];
 }
 static void NLFetchRequest(NLRequest *request, NSValue *key) {
+    NSUInteger generation = ++request.lookupGeneration;
+    [request.subscription cancel]; request.subscription = nil;
+    request.lookupFinished = NO;
     if (request.track.duration > 0) { NLBeginFetch(request, key); return; }
     NLReadPlaybackInfo(^(NSDictionary *info) {
-        if (![request isCurrent]) return;
+        if (![request isCurrent] || request.lookupGeneration != generation) return;
         if (NLPlaybackMatches(info, request.track.title, request.track.artist))
             request.track.duration = NLPlaybackDuration(info);
         NLBeginFetch(request, key);
@@ -375,7 +378,15 @@ static void NLSongChanged(NSDictionary *info) {
     for (NSValue *key in [pending.allKeys copy]) {
         NLRequest *request = pending[key];
         if ([request.track.title caseInsensitiveCompare:title] == NSOrderedSame &&
-            [request.track.artist caseInsensitiveCompare:artist] == NSOrderedSame) continue;
+            [request.track.artist caseInsensitiveCompare:artist] == NSOrderedSame) {
+            double duration = NLPlaybackDuration(info);
+            if (request.track.duration <= 0 && duration > 0) {
+                request.track.duration = duration;
+                NLLog([NSString stringWithFormat:@"Late playback duration: %.3f; retrying current lyric upgrade", duration]);
+                NLFetchRequest(request, key);
+            }
+            continue;
+        }
         [request.subscription cancel];
         [request forwardOriginal];
         [pending removeObjectForKey:key];

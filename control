@@ -1,6 +1,6 @@
 Package: com.shalamand3r.lyricbridge
 Name: LyricBridge
-Version: 1.0.1
+Version: 1.0.2
 Architecture: iphoneos-arm64
 Description: Native Apple Music lyrics for unsynced songs
 Depends: preferenceloader, com.shalamand3r.corelyrics (>= 1.0), ellekit, firmware (>= 16.2)
