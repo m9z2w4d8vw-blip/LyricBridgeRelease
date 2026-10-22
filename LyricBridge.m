@@ -10,6 +10,8 @@
 #import "CoreLyrics/CoreLyrics.h"
 #import "CoreLyrics/LyricsPreferences.h"
 #import "SingSupport.h"
+#import "CoreLyrics/CoreLyricsDiagnostics.h"
+#import <QuartzCore/QuartzCore.h>
 
 typedef void * __attribute__((swiftcall)) (*NLModelInit)(uintptr_t, uintptr_t, void *, void * __attribute__((swift_context)));
 typedef BOOL __attribute__((swiftcall)) (*NLSupportsSong)(void *, void * __attribute__((swift_context)));
@@ -30,6 +32,7 @@ static void (*releaseSwift)(void *);
 static atomic_bool enabled = true;
 static atomic_bool keepOffline;
 static atomic_bool diagnostics;
+static atomic_bool performanceLogging;
 static NSMutableDictionary<NSValue *, id> *pending;
 static NSMutableDictionary<NSString *, NSDate *> *negativeResults;
 typedef void (*NLGetPlaybackInfo)(dispatch_queue_t, void (^)(CFDictionaryRef));
@@ -39,6 +42,8 @@ static NSDictionary *playbackInfo;
 static NSUInteger playbackGeneration;
 static id songObserver;
 
+static void NLWriteLog(NSString *message);
+#define NLLog(...) do { if (atomic_load(&diagnostics)) NLWriteLog(__VA_ARGS__); } while (0)
 static NSDictionary *NLPlaybackSnapshot(void) {
     @synchronized (playbackLock) { return playbackInfo; }
 }
@@ -64,16 +69,17 @@ static DLLyricsTrack *NLPlaybackTrack(NSDictionary *info) {
     return track;
 }
 static void NLReadPlaybackInfo(void (^completion)(NSDictionary *)) {
-    if (!getPlaybackInfo) { completion(nil); return; }
+    if (!getPlaybackInfo) { NLLog(@"Metadata API unavailable"); completion(nil); return; }
     NSUInteger generation = playbackGeneration;
     __block BOOL finished = NO;
     void (^finish)(NSDictionary *) = ^(NSDictionary *info) {
         if (finished) return;
         finished = YES;
-        if (generation != playbackGeneration) { completion(nil); return; }
+        if (generation != playbackGeneration) { NLLog(@"Discarded stale metadata response"); completion(nil); return; }
         if (info) {
             @synchronized (playbackLock) { playbackInfo = [info copy]; }
         }
+        NLLog([NSString stringWithFormat:@"Metadata response: available=%d duration=%.3f", info != nil, NLPlaybackDuration(info)]);
         completion(info);
     };
     // metadata can arrive late; never hold apple's lyric loader indefinitely.
@@ -83,19 +89,12 @@ static void NLReadPlaybackInfo(void (^completion)(NSDictionary *)) {
     });
 }
 
-static void NLLog(NSString *message) {
-    if (!atomic_load(&diagnostics)) return;
-    NSString *path = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/LyricBridge.log"];
-    @synchronized (negativeResults) {
-        if ([[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileSize] > 65536)
-            [NSFileManager.defaultManager removeItemAtPath:path error:nil];
-        NSData *data = [[message stringByAppendingString:@"\n"] dataUsingEncoding:NSUTF8StringEncoding];
-        NSFileHandle *file = [NSFileHandle fileHandleForWritingAtPath:path];
-        if (!file) { [data writeToFile:path atomically:YES]; return; }
-        @try { [file seekToEndOfFile]; [file writeData:data]; }
-        @catch (__unused NSException *exception) {}
-        @finally { [file closeFile]; }
-    }
+static NSString *NLDiagnosticRoot(void) { return [NSHomeDirectory() stringByAppendingPathComponent:@"Library/CoreLyrics"]; }
+static void NLWriteLog(NSString *message) { CLDiagnosticAppend(NLDiagnosticRoot(), @"LyricBridge", NO, message); }
+static void NLPerformance(NSString *event, CFTimeInterval started) {
+    if (!atomic_load(&performanceLogging)) return;
+    CLDiagnosticAppend(NLDiagnosticRoot(), @"LyricBridge", YES,
+        [NSString stringWithFormat:@"event=%@ seconds=%.3f", event, started > 0 ? CACurrentMediaTime() - started : 0]);
 }
 static id NLObject(id object, NSString *property) {
     Method method = class_getInstanceMethod([object class], NSSelectorFromString(property));
@@ -130,6 +129,7 @@ static DLLyricsTrack *NLTrack(id song) {
     return track;
 }
 static id NLModel(DLLyricsResult *result) {
+    CFTimeInterval started = atomic_load(&performanceLogging) ? CACurrentMediaTime() : 0;
     Class parserClass = NSClassFromString(@"MSVLyricsTTMLParser");
     Class modelClass = NSClassFromString(@"_TtC11MusicCoreUI6Lyrics") ?: NSClassFromString(@"MusicCoreUI.Lyrics");
     if (!createModel || !parserClass || !modelClass || class_getInstanceSize(modelClass) == 0) return nil;
@@ -138,8 +138,9 @@ static id NLModel(DLLyricsResult *result) {
         NSError *error = nil;
         id info = ((id (*)(id, SEL, NSError **))objc_msgSend)(parser, NSSelectorFromString(@"parseWithError:"), &error);
         if (!info || error || ![NLObject(info, @"lyricsLines") count]) { NLLog(@"Native TTML parser rejected result"); return nil; }
+        NLPerformance(@"parse-ttml", started);
         return CFBridgingRelease(createModel(0, 0, (void *)CFBridgingRetain(info), (__bridge void *)modelClass));
-    } @catch (NSException *exception) { NLLog([NSString stringWithFormat:@"Native model exception: %@", exception.name]); return nil; }
+    } @catch (NSException *exception) { NLLog(@"Native model exception"); return nil; }
 }
 @interface NLRequest : NSObject
 @property (nonatomic, strong) id song;
@@ -227,13 +228,16 @@ static BOOL __attribute__((swiftcall)) NLSupports(void *song, void * __attribute
     return YES;
 }
 static void NLBeginFetch(NLRequest *request, NSValue *key) {
-    NLLog([NSString stringWithFormat:@"Lookup: %@ / %@ duration=%.3f", request.track.title, request.track.artist, request.track.duration]);
+    NLLog([NSString stringWithFormat:@"Lookup: generation=%lu duration=%.3f preservingApple=%d", (unsigned long)request.lookupGeneration, request.track.duration, request.preservingAppleLyrics]);
+    CFTimeInterval started = atomic_load(&performanceLogging) ? CACurrentMediaTime() : 0;
     NSUInteger generation = request.lookupGeneration;
     __weak NLRequest *weakRequest = request;
     request.subscription = [DLLyricsEngine.sharedEngine fetchTrack:request.track client:@"LyricBridge" update:^(DLLyricsResult *result, BOOL finished, NSError *error) {
         NLRequest *active = weakRequest;
         if (!active || ![active isCurrent] || active.lookupGeneration != generation) return;
-        NLLog([NSString stringWithFormat:@"Result: provider=%@ lines=%lu words=%d finished=%d error=%@", result.provider, (unsigned long)result.lines.count, result.hasWordTiming, finished, error]);
+        NLLog([NSString stringWithFormat:@"Result: provider=%@ lines=%lu words=%d finished=%d errorCode=%ld", result.provider, (unsigned long)result.lines.count, result.hasWordTiming, finished, (long)error.code]);
+        if (result) NLPerformance(result.hasWordTiming ? @"word-result" : @"line-result", started);
+        if (finished) NLPerformance(@"lookup-finished", started);
         BOOL usable = result && (!active.preservingAppleLyrics || result.hasWordTiming);
         id model = usable && result != active.displayedResult ? NLModel(result) : nil;
         if (model) {
@@ -255,7 +259,7 @@ static void NLBeginFetch(NLRequest *request, NSValue *key) {
                     negativeResults[active.track.cacheKey] = [NSDate dateWithTimeIntervalSinceNow:30];
                 }
             }
-            NLLog([NSString stringWithFormat:@"No usable external lyrics: %@", error.localizedDescription ?: @"no match"]);
+            NLLog([NSString stringWithFormat:@"No usable external lyrics: errorCode=%ld", (long)error.code]);
             [active forwardOriginal];
         }
         active.lookupFinished = YES;
@@ -405,6 +409,8 @@ static void NLReload(CFNotificationCenterRef center, void *observer, CFStringRef
     atomic_store(&enabled, NLPreference(@"Enabled", YES, saved));
     atomic_store(&keepOffline, NLPreference(@"KeepOffline", NO, saved));
     atomic_store(&diagnostics, NLPreference(@"DebugLogging", NO, saved));
+    atomic_store(&performanceLogging, NLPreference(@"PerformanceLogging", NO, saved));
+    NLSingSetLoggingEnabled(atomic_load(&diagnostics));
     NLSingSetEnabled(atomic_load(&enabled) && NLPreference(@"EnableSing", YES, saved));
     dispatch_async(dispatch_get_main_queue(), ^{
         if (!atomic_load(&enabled)) {

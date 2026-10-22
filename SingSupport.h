@@ -2,3 +2,4 @@
 #import <Foundation/Foundation.h>
 void NLSingStart(void);
 void NLSingSetEnabled(BOOL enabled);
+void NLSingSetLoggingEnabled(BOOL enabled);

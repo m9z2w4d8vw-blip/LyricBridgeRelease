@@ -1,0 +1,6 @@
+#!/bin/sh
+# diagnostic collection starts off after every install or update.
+if [ "$1" = "configure" ]; then
+    /var/jb/usr/libexec/LyricBridge/LyricBridgeResetDiagnostics || exit 1
+fi
+exit 0

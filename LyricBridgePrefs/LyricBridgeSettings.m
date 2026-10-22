@@ -7,6 +7,8 @@
 #import <Preferences/PSControlTableCell.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "LyricBridgeDiagnostics.h"
 
 #define PREFS_SUITE @"com.shalamand3r.lyricbridge"
 #define SHARED_SUITE @"com.shalamand3r.datelyrics"
@@ -467,7 +469,8 @@ static void LyricBridgeWipeLyricsCaches(void) {
 
 // mark: - experimental options controller
 
-@interface LyricBridgeExperimentalController : PSListController
+@interface LyricBridgeExperimentalController : PSListController <UIDocumentPickerDelegate>
+@property (nonatomic) BOOL diagnosticsVisible;
 @property (nonatomic) BOOL resetInProgress;
 @property (nonatomic) NSUInteger cacheSizeRequest;
 - (void)updateWipeCacheSpecifier;
@@ -477,7 +480,10 @@ static void LyricBridgeWipeLyricsCaches(void) {
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
-        _specifiers = [self loadSpecifiersFromPlistName:@"Experimental" target:self];
+        NSMutableArray *visible = [NSMutableArray new];
+        for (PSSpecifier *spec in [self loadSpecifiersFromPlistName:@"Experimental" target:self])
+            if (![[spec propertyForKey:@"InternalDiagnostics"] boolValue] || self.diagnosticsVisible) [visible addObject:spec];
+        _specifiers = visible;
         for (PSSpecifier *spec in _specifiers) {
             if ([[spec propertyForKey:@"id"] isEqualToString:@"WipeSavedLyrics"] ||
                 [[spec propertyForKey:@"action"] isEqualToString:@"wipeSavedLyrics"] ||
@@ -492,6 +498,11 @@ static void LyricBridgeWipeLyricsCaches(void) {
 - (void)viewDidLoad {
     [super viewDidLoad];
     self.title = @"Experimental";
+    UILabel *title = [UILabel new]; title.text = @"Experimental";
+    title.font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline]; title.textColor = UIColor.labelColor;
+    title.userInteractionEnabled = YES; [title sizeToFit];
+    UILongPressGestureRecognizer *gesture = [[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(toggleDiagnostics:)];
+    gesture.minimumPressDuration = 2; [title addGestureRecognizer:gesture]; self.navigationItem.titleView = title;
     UIColor *tintColor = PINK_COLOR;
     [UISwitch appearanceWhenContainedInInstancesOfClasses:@[[self class]]].onTintColor = tintColor;
     self.view.tintColor = tintColor;
@@ -512,6 +523,63 @@ static void LyricBridgeWipeLyricsCaches(void) {
 - (void)tableView:(UITableView *)tableView willDisplayCell:(UITableViewCell *)cell forRowAtIndexPath:(NSIndexPath *)indexPath {
     PSSpecifier *specifier = [self specifierAtIndexPath:indexPath];
     LyricBridgeStyleDestructiveCell(cell, specifier);
+}
+
+- (void)toggleDiagnostics:(UILongPressGestureRecognizer *)gesture {
+    if (gesture.state != UIGestureRecognizerStateBegan) return;
+    self.diagnosticsVisible = !self.diagnosticsVisible; _specifiers = nil; [self reloadSpecifiers];
+    [self updateWipeCacheSpecifier];
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+}
+- (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
+    [super setPreferenceValue:value specifier:specifier];
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.shalamand3r.corelyrics/ReloadPrefs"), NULL, NULL, YES);
+}
+- (void)showDebugLog { [self showDiagnosticLog:NO]; }
+- (void)showPerformanceLog { [self showDiagnosticLog:YES]; }
+- (void)showDiagnosticLog:(BOOL)performance {
+    LyricBridgeLogController *controller = [LyricBridgeLogController new]; controller.performance = performance;
+    [self.navigationController pushViewController:controller animated:YES];
+}
+- (void)exportLogs { LyricBridgeExportDiagnosticLogs(self); }
+- (void)clearLogs {
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(LyricBridgeCacheMaintenanceQueue(), ^{
+        LyricBridgeClearDiagnosticLogs();
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) controller = weakSelf; if (!controller) return;
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Logs Cleared" message:nil preferredStyle:UIAlertControllerStyleAlert];
+            [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [controller presentViewController:alert animated:YES completion:nil];
+        });
+    });
+}
+- (void)importLog {
+    UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeText, UTTypeData] asCopy:YES];
+    picker.delegate = self; picker.allowsMultipleSelection = NO;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+- (void)documentPicker:(UIDocumentPickerViewController *)picker didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    NSURL *url = urls.firstObject; if (!url) return;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(LyricBridgeCacheMaintenanceQueue(), ^{
+        BOOL scoped = [url startAccessingSecurityScopedResource];
+        NSURL *destination = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"LyricBridge-import-%@.log", NSUUID.UUID.UUIDString]]];
+        BOOL copied = [NSFileManager.defaultManager copyItemAtURL:url toURL:destination error:nil];
+        if (scoped) [url stopAccessingSecurityScopedResource];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            typeof(self) controller = weakSelf;
+            if (!controller) { [NSFileManager.defaultManager removeItemAtURL:destination error:nil]; return; }
+            if (copied) {
+                LyricBridgeLogController *viewer = [LyricBridgeLogController new]; viewer.importedURL = destination;
+                [controller.navigationController pushViewController:viewer animated:YES];
+            } else {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Couldn’t Import Log" message:@"Choose a text or log file from Files." preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [controller presentViewController:alert animated:YES completion:nil];
+            }
+        });
+    });
 }
 
 - (void)updateWipeCacheSpecifier {
@@ -587,7 +655,10 @@ static void LyricBridgeWipeLyricsCaches(void) {
 
     CFPreferencesSetAppValue(CFSTR("Enabled"), (__bridge CFPropertyListRef)@YES, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("EnableSing"), (__bridge CFPropertyListRef)@YES, CFSTR("com.shalamand3r.lyricbridge"));
+    CFPreferencesSetAppValue(CFSTR("DebugLogging"), kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
+    CFPreferencesSetAppValue(CFSTR("PerformanceLogging"), kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesAppSynchronize(CFSTR("com.shalamand3r.lyricbridge"));
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.shalamand3r.corelyrics/ReloadPrefs"), NULL, NULL, YES);
 
     _specifiers = nil;
     [self reloadSpecifiers];

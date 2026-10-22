@@ -26,7 +26,6 @@
 			<key>isDestructive</key>
 			<true/>
 		</dict>
-
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
@@ -52,6 +51,111 @@
 				<string>Reset all LyricBridge settings? Saved lyrics will be kept.</string>
 				<key>okTitle</key>
 				<string>Reset</string>
+				<key>cancelTitle</key>
+				<string>Cancel</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
+			<string>Diagnostics</string>
+			<key>footerText</key>
+			<string>Local logs omit song titles, artists, lyric text and tokens. Logging stays off until enabled. No automatic size limit; clear logs after testing.</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>key</key>
+			<string>DebugLogging</string>
+			<key>label</key>
+			<string>Debug Logging</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.shalamand3r.lyricbridge</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSwitchCell</string>
+			<key>key</key>
+			<string>PerformanceLogging</string>
+			<key>label</key>
+			<string>Performance Logging</string>
+			<key>default</key>
+			<false/>
+			<key>defaults</key>
+			<string>com.shalamand3r.lyricbridge</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>View Debug Log</string>
+			<key>action</key>
+			<string>showDebugLog</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>View Performance Log</string>
+			<key>action</key>
+			<string>showPerformanceLog</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Import Log</string>
+			<key>action</key>
+			<string>importLog</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Export Logs</string>
+			<key>action</key>
+			<string>exportLogs</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSButtonCell</string>
+			<key>label</key>
+			<string>Clear Logs</string>
+			<key>action</key>
+			<string>clearLogs</string>
+			<key>InternalDiagnostics</key>
+			<true/>
+			<key>isDestructive</key>
+			<true/>
+			<key>confirmation</key>
+			<dict>
+				<key>title</key>
+				<string>Clear Logs?</string>
+				<key>prompt</key>
+				<string>Delete LyricBridge and CoreLyrics diagnostic logs? Saved lyrics and preferences will be kept.</string>
+				<key>okTitle</key>
+				<string>Clear</string>
 				<key>cancelTitle</key>
 				<string>Cancel</string>
 			</dict>

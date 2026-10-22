@@ -5,10 +5,10 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = LyricBridge
 LyricBridge_FILES = LyricBridge.m SingSupport.m
 LyricBridge_CFLAGS = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -I$(THEOS_PROJECT_DIR)/SDK
-LyricBridge_FRAMEWORKS = Foundation UIKit MediaPlayer
+LyricBridge_FRAMEWORKS = Foundation UIKit MediaPlayer QuartzCore
 LyricBridge_LIBRARIES = substrate CoreLyrics
 LyricBridge_LDFLAGS = -L$(THEOS_PROJECT_DIR)/SDK
-SUBPROJECTS = LyricBridgePrefs
+SUBPROJECTS = LyricBridgePrefs tools/install-helper
 include $(THEOS_MAKE_PATH)/tweak.mk
 include $(THEOS_MAKE_PATH)/aggregate.mk
 
@@ -17,4 +17,6 @@ before-package::
 	@find "$(THEOS_STAGING_DIR)" -type f -exec chmod 644 {} +
 	@find "$(THEOS_STAGING_DIR)" -type f -name '*.dylib' -exec chmod 755 {} +
 	@find "$(THEOS_STAGING_DIR)" -type f -path '*/LyricBridgePrefs.bundle/LyricBridgePrefs' -exec chmod 755 {} +
+	@find "$(THEOS_STAGING_DIR)" -type f -name 'LyricBridgeResetDiagnostics' -exec chmod 755 {} +
+	@[ -f "$(THEOS_STAGING_DIR)/DEBIAN/postinst" ] && chmod 755 "$(THEOS_STAGING_DIR)/DEBIAN/postinst" || true
 	@[ -f "$(THEOS_STAGING_DIR)/DEBIAN/postrm" ] && chmod 755 "$(THEOS_STAGING_DIR)/DEBIAN/postrm" || true
