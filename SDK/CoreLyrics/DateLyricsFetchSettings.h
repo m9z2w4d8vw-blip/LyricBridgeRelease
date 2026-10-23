@@ -4,9 +4,9 @@
 
 // preserve the unlimited sentinel used by earlier slider settings.
 static const NSInteger DateLyricsUnlimitedRequestTimeout = 21;
-static const NSInteger DateLyricsDefaultRequestTimeout = 10;
+static const NSInteger DateLyricsDefaultRequestTimeout = 15;
 static const NSInteger DateLyricsShortRequestTimeout = 5;
-static const NSInteger DateLyricsLongRequestTimeout = 10;
+static const NSInteger DateLyricsLongRequestTimeout = 15;
 
 static inline NSInteger DateLyricsSanitizedRequestTimeout(id saved) {
     if (![saved isKindOfClass:NSNumber.class]) return DateLyricsDefaultRequestTimeout;

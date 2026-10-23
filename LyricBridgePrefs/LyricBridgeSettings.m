@@ -478,6 +478,7 @@ static void LyricBridgeWipeLyricsCaches(void) {
 @implementation LyricBridgeExperimentalController
 
 - (NSArray *)specifiers {
+    self.diagnosticsVisible = CFPreferencesGetAppBooleanValue(CFSTR("DiagnosticsVisible"), CFSTR("com.shalamand3r.lyricbridge"), NULL);
     if (!_specifiers) {
         NSMutableArray *visible = [NSMutableArray new];
         for (PSSpecifier *spec in [self loadSpecifiersFromPlistName:@"Experimental" target:self])
@@ -526,7 +527,11 @@ static void LyricBridgeWipeLyricsCaches(void) {
 
 - (void)toggleDiagnostics:(UILongPressGestureRecognizer *)gesture {
     if (gesture.state != UIGestureRecognizerStateBegan) return;
-    self.diagnosticsVisible = !self.diagnosticsVisible; _specifiers = nil; [self reloadSpecifiers];
+    self.diagnosticsVisible = !self.diagnosticsVisible;
+    CFPreferencesSetAppValue(CFSTR("DiagnosticsVisible"), self.diagnosticsVisible ? kCFBooleanTrue : kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
+    CFPreferencesAppSynchronize(CFSTR("com.shalamand3r.lyricbridge"));
+    _specifiers = nil;
+    [self reloadSpecifiers];
     [self updateWipeCacheSpecifier];
     [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
 }
@@ -630,6 +635,7 @@ static void LyricBridgeWipeLyricsCaches(void) {
 
     CFPreferencesSetAppValue(CFSTR("Enabled"), (__bridge CFPropertyListRef)@YES, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("EnableSing"), (__bridge CFPropertyListRef)@YES, CFSTR("com.shalamand3r.lyricbridge"));
+    CFPreferencesSetAppValue(CFSTR("AppleTimingPolicy"), (__bridge CFPropertyListRef)@1, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("DebugLogging"), kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesSetAppValue(CFSTR("PerformanceLogging"), kCFBooleanFalse, CFSTR("com.shalamand3r.lyricbridge"));
     CFPreferencesAppSynchronize(CFSTR("com.shalamand3r.lyricbridge"));

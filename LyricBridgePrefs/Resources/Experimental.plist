@@ -32,7 +32,7 @@
 			<key>label</key>
 			<string>Reset Settings</string>
 			<key>footerText</key>
-			<string>Reset LyricBridge preferences to default values.</string>
+			<string>Restore default settings. Saved lyrics are kept.</string>
 		</dict>
 		<dict>
 			<key>cell</key>
@@ -61,7 +61,7 @@
 			<key>label</key>
 			<string>Diagnostics (m9z2w4d8vw-blip)</string>
 			<key>footerText</key>
-			<string>Debug, performance and Sing events share one log. Logs omit song titles, artists, lyric text and tokens. Logging is off by default. No automatic size limit; clear logs after testing.</string>
+			<string>Record logs to help troubleshoot issues. Turn off when finished.</string>
 			<key>InternalDiagnostics</key>
 			<true/>
 		</dict>

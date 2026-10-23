@@ -109,6 +109,41 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>label</key>
+			<string>Apple Synced Flag</string>
+			<key>footerText</key>
+			<string>Some importers, such as ByeTunes, mark songs as having Apple Music synced lyrics while storing only plain text. Verify looks online first when that happens. Trust always lets Apple go first. Online First always looks online first and falls back to Apple.</string>
+		</dict>
+		<dict>
+			<key>cell</key>
+			<string>PSSegmentCell</string>
+			<key>key</key>
+			<string>AppleTimingPolicy</string>
+			<key>label</key>
+			<string>Apple Synced Flag</string>
+			<key>default</key>
+			<integer>1</integer>
+			<key>defaults</key>
+			<string>com.shalamand3r.lyricbridge</string>
+			<key>PostNotification</key>
+			<string>com.shalamand3r.lyricbridge/ReloadPrefs</string>
+			<key>validTitles</key>
+			<array>
+				<string>Trust</string>
+				<string>Verify</string>
+				<string>Online First</string>
+			</array>
+			<key>validValues</key>
+			<array>
+				<integer>0</integer>
+				<integer>1</integer>
+				<integer>2</integer>
+			</array>
+		</dict>
+
+		<dict>
+			<key>cell</key>
+			<string>PSGroupCell</string>
+			<key>label</key>
 			<string>Experimental</string>
 			<key>footerText</key>
 			<string>Cache management and reset options.</string>

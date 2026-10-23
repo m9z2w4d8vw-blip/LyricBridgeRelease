@@ -117,6 +117,30 @@ static BOOL NLHasTimedAppleLyrics(id song) {
     if (type[0] != 'B' && type[0] != 'c') return YES;
     return ((BOOL (*)(id, SEL))objc_msgSend)(lyrics, NSSelectorFromString(@"hasTimeSyncedLyrics"));
 }
+// apple timing policy: 0 = trust the library flag, 1 = verify it (default), 2 = always look online first.
+static atomic_int appleTimingPolicy = 1;
+// importers can flag every song as having apple's synced lyrics while storing only plain text.
+// apple's store lyrics are fetched at display time, so local plain text beside the flag marks an unverified claim.
+static NSUInteger NLLocalPlainLyricsLength(id song) {
+    id text = NLObject(NLObject(song, @"lyrics"), @"text");
+    if (![text isKindOfClass:NSString.class]) return 0;
+    NSString *trimmed = [(NSString *)text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    // ttml here is apple's own timed data, not an importer's plain text.
+    if ([trimmed hasPrefix:@"<"]) return 0;
+    return trimmed.length;
+}
+static BOOL NLShouldDeferToApple(id song, BOOL shouldLog) {
+    BOOL claimed = NLHasTimedAppleLyrics(song);
+    int policy = atomic_load(&appleTimingPolicy);
+    BOOL logging = shouldLog && atomic_load(&diagnostics);
+    NSUInteger local = 0;
+    if (claimed && (policy == 1 || logging)) local = NLLocalPlainLyricsLength(song);
+    BOOL defer = claimed && (policy == 0 || (policy == 1 && local == 0));
+    if (logging) NLLog([NSString stringWithFormat:@"Lyric request: appleClaim=%d policy=%@ localPlainText=%lu -> %@",
+        claimed, policy == 0 ? @"trust" : (policy == 2 ? @"online-first" : @"verify"), (unsigned long)local,
+        defer ? @"Apple loader" : (claimed ? @"online first (Apple claim unverified)" : @"online")]);
+    return defer;
+}
 static DLLyricsTrack *NLTrack(id song) {
     NSString *title = NLObject(song, @"title"), *artist = NLObject(NLObject(song, @"artist"), @"name");
     if (![title isKindOfClass:NSString.class] || ![artist isKindOfClass:NSString.class] || !title.length || !artist.length) return nil;
@@ -282,7 +306,7 @@ static void NLFetchRequest(NLRequest *request, NSValue *key) {
 }
 static void __attribute__((swiftcall)) NLLoad(void *song, void *callback, void *context, void * __attribute__((swift_context)) loader) {
     // apple's loader inherits nsobject, first field is a dict not swift refcount
-    if (!atomic_load(&enabled) || NLHasTimedAppleLyrics((__bridge id)song)) {
+    if (!atomic_load(&enabled) || NLShouldDeferToApple((__bridge id)song, YES)) {
         originalLoad(song, callback, context, loader);
         return;
     }
@@ -294,7 +318,7 @@ static void __attribute__((swiftcall)) NLLoad(void *song, void *callback, void *
         NLRequest *old = pending[key]; [old.subscription cancel]; [old forwardOriginal];
         pending[key] = request;
         request.track = NLTrack(request.song);
-        if (!atomic_load(&enabled) || !request.track || NLHasTimedAppleLyrics(request.song)) {
+        if (!atomic_load(&enabled) || !request.track || NLShouldDeferToApple(request.song, NO)) {
             [request forwardOriginal]; [pending removeObjectForKey:key]; return;
         }
         NLFetchRequest(request, key);
@@ -375,6 +399,11 @@ static BOOL NLPreference(NSString *key, BOOL fallback, NSDictionary *saved) {
     id value = DLLyricsPreferenceValue(@"com.shalamand3r.lyricbridge", key, saved);
     return [value isKindOfClass:NSNumber.class] ? [value boolValue] : fallback;
 }
+static int NLPreferenceChoice(NSString *key, int fallback, int maximum, NSDictionary *saved) {
+    id value = DLLyricsPreferenceValue(@"com.shalamand3r.lyricbridge", key, saved);
+    int choice = [value isKindOfClass:NSNumber.class] ? [value intValue] : fallback;
+    return (choice >= 0 && choice <= maximum) ? choice : fallback;
+}
 static void NLSongChanged(NSDictionary *info) {
     NSString *title = info[@"kMRMediaRemoteNowPlayingInfoTitle"], *artist = info[@"kMRMediaRemoteNowPlayingInfoArtist"];
     if (![title isKindOfClass:NSString.class] || ![artist isKindOfClass:NSString.class]) return;
@@ -410,6 +439,8 @@ static void NLReload(CFNotificationCenterRef center, void *observer, CFStringRef
     atomic_store(&keepOffline, NLPreference(@"KeepOffline", NO, saved));
     atomic_store(&diagnostics, NLPreference(@"DebugLogging", NO, saved));
     atomic_store(&performanceLogging, atomic_load(&diagnostics));
+    atomic_store(&appleTimingPolicy, NLPreferenceChoice(@"AppleTimingPolicy", 1, 2, saved));
+    NLLog([NSString stringWithFormat:@"Preferences: enabled=%d appleTimingPolicy=%d", atomic_load(&enabled), atomic_load(&appleTimingPolicy)]);
     NLSingSetLoggingEnabled(atomic_load(&diagnostics));
     NLSingSetEnabled(atomic_load(&enabled) && NLPreference(@"EnableSing", YES, saved));
     dispatch_async(dispatch_get_main_queue(), ^{
